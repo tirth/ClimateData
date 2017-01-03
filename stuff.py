@@ -8,7 +8,12 @@ STATION_INV_FILENAME = 'Station Inventory.csv'
 STATION_INV_FTP = 'ftp://client_climate@ftp.tor.ec.gc.ca/Pub/Get_More_Data_Plus_de_donnees/Station%20Inventory%20EN.csv'
 STATION_INFO = {}
 TIMEFRAMES = {'hourly': 1, 'daily': 2, 'monthly': 3}
-AVG_EARTH_RADIUS = 6371
+AVG_EARTH_RADIUS = 6371  # km
+
+DATE_TIME_TITLE = 'Date/Time'
+TEMP_TITLE = 'Temp (°C)'
+MEAN_TEMP_TITLE = 'Mean Temp (°C)'
+TOTAL_PRECIP_TITLE = 'Total Precip (mm)'
 
 
 def get_station_inventory():
@@ -28,7 +33,7 @@ def get_station_inventory():
         STATION_INFO = {station['Name']: station for station in csv.DictReader(stations_file)}
 
 
-def stations_by_proximity(lat, long, distance=25):
+def stations_by_proximity(lat: float, long: float, distance=25):
     stations = []
     lat, long = map(radians, (lat, long))
 
@@ -36,6 +41,7 @@ def stations_by_proximity(lat, long, distance=25):
         s_lat = radians(float(STATION_INFO[station]['Latitude (Decimal Degrees)']))
         s_long = radians(float(STATION_INFO[station]['Longitude (Decimal Degrees)']))
 
+        # haversine
         d = sin((s_lat - lat) / 2) ** 2 + cos(lat) * cos(s_lat) * sin((s_long - long) / 2) ** 2
         h = 2 * AVG_EARTH_RADIUS * asin(sqrt(d))
 
@@ -45,7 +51,7 @@ def stations_by_proximity(lat, long, distance=25):
     return stations
 
 
-def station_dates(station_name):
+def station_dates(station_name: str):
     info = STATION_INFO[station_name]
     first_year, last_year = info['First Year'], info['Last Year']
     hourly_fy, hourly_ly = info['HLY First Year'], info['HLY Last Year']
@@ -56,6 +62,17 @@ def station_dates(station_name):
     print('hourly', hourly_fy, hourly_ly)
     print('daily', daily_fy, daily_ly)
     print('monthly', monthly_fy, monthly_ly)
+
+    if monthly_fy == '' or monthly_fy > first_year:
+        print('gotta check earlier daily')
+        if daily_fy == '' or daily_fy > first_year:
+            print('gotta check earlier hourly')
+
+    if monthly_ly == '' or monthly_ly < last_year:
+        print('gotta check later daily')
+        if daily_ly == '' or daily_ly < last_year:
+            print('gotta check later hourly')
+
     print()
 
 
@@ -80,44 +97,63 @@ def bulk_data(station_id, year, month, timeframe):
            'submit=Download+Data'
 
 
-def get_data(station, year, month, timeframe):
-    r = requests.get((bulk_data(STATION_INFO[station]['Station ID'], year, month, timeframe)))
+def data_rows(response_text: str):
+    all_data = response_text.split('\n')
+
+    # remove extraneous info
+    current = all_data[0]
+    while DATE_TIME_TITLE not in current:
+        all_data.remove(current)
+        current = all_data[0]
+
+    return csv.DictReader(all_data)
+
+
+def get_temp(record):
+    temp = None
+
+    if TEMP_TITLE in record:
+        temp = record[TEMP_TITLE]
+    elif MEAN_TEMP_TITLE in record:
+        temp = record[MEAN_TEMP_TITLE]
+
+    return temp if temp != '' else None
+
+
+def get_precip(record):
+    precip = None
+
+    if TOTAL_PRECIP_TITLE in record:
+        precip = record[TOTAL_PRECIP_TITLE]
+
+    return precip if precip != '' else None
+
+
+def get_data(station):
+    r = requests.get((bulk_data(STATION_INFO[station]['Station ID'], 1970, 1, TIMEFRAMES['monthly'])))
 
     if r.status_code != 200:
         print('nope')
         return
 
-    all_data = r.text.split('\n')
+    temp_data, precip_data = {}, {}
 
-    # remove extraneous info
-    current = all_data[0]
-    while 'Date/Time' not in current:
-        all_data.remove(current)
-        current = all_data[0]
+    for record in data_rows(r.text):
+        temp_data[record[DATE_TIME_TITLE]] = get_temp(record)
+        precip_data[record[DATE_TIME_TITLE]] = get_precip(record)
 
-    temp = precip = None
-    for data in csv.DictReader(all_data):
-        if 'Temp (°C)' in data:
-            temp = data['Temp (°C)']
-        elif 'Mean Temp (°C)' in data:
-            temp = data['Mean Temp (°C)']
-
-        if 'Total Precip (mm)' in data:
-            precip = data['Total Precip (mm)']
-
-        print(data['Date/Time'], temp, precip)
+    return temp_data, precip_data
 
 
 def go():
     get_station_inventory()
 
-    stations = stations_by_proximity(45, -79)
+    stations = stations_by_proximity(44, -79)
     print('found', len(stations))
 
     for station in stations:
-        if full_monthly(station):
-            print(station)
-            get_data(station, 1970, 1, TIMEFRAMES['monthly'])
+        station_dates(station)
+        # temp_data, precip_data = get_data(station)
 
 
 if __name__ == '__main__':
