@@ -10,6 +10,21 @@ STATION_INFO = {}
 TIMEFRAMES = {'hourly': 1, 'daily': 2, 'monthly': 3}
 AVG_EARTH_RADIUS = 6371  # km
 
+# station info column names
+STATION_NAME = 'Name'
+STATION_ID = 'Station ID'
+STATION_LATITUDE = 'Latitude (Decimal Degrees)'
+STATION_LONGITUDE = 'Longitude (Decimal Degrees)'
+STATION_FY = 'First Year'
+STATION_LY = 'Last Year'
+STATION_HLY_FY = 'HLY First Year'
+STATION_HLY_LY = 'HLY Last Year'
+STATION_DLY_FY = 'DLY First Year'
+STATION_DLY_LY = 'DLY Last Year'
+STATION_MLY_FY = 'MLY First Year'
+STATION_MLY_LY = 'MLY Last Year'
+
+# data column names
 DATE_TIME_TITLE = 'Date/Time'
 TEMP_TITLE = 'Temp (°C)'
 MEAN_TEMP_TITLE = 'Mean Temp (°C)'
@@ -38,8 +53,8 @@ def stations_by_proximity(lat: float, long: float, distance=25):
     lat, long = map(radians, (lat, long))
 
     for station in STATION_INFO:
-        s_lat = radians(float(STATION_INFO[station]['Latitude (Decimal Degrees)']))
-        s_long = radians(float(STATION_INFO[station]['Longitude (Decimal Degrees)']))
+        s_lat = radians(float(STATION_INFO[station][STATION_LATITUDE]))
+        s_long = radians(float(STATION_INFO[station][STATION_LONGITUDE]))
 
         # haversine
         d = sin((s_lat - lat) / 2) ** 2 + cos(lat) * cos(s_lat) * sin((s_long - long) / 2) ** 2
@@ -53,37 +68,31 @@ def stations_by_proximity(lat: float, long: float, distance=25):
 
 def station_dates(station_name: str):
     info = STATION_INFO[station_name]
-    first_year, last_year = info['First Year'], info['Last Year']
-    hourly_fy, hourly_ly = info['HLY First Year'], info['HLY Last Year']
-    daily_fy, daily_ly = info['DLY First Year'], info['DLY Last Year']
-    monthly_fy, monthly_ly = info['MLY First Year'], info['MLY Last Year']
 
-    print(station_name, first_year, last_year)
-    print('hourly', hourly_fy, hourly_ly)
-    print('daily', daily_fy, daily_ly)
-    print('monthly', monthly_fy, monthly_ly)
+    monthly_range = range(0)
+    if info[STATION_MLY_FY] != '':
+        monthly_range = range(int(info[STATION_MLY_FY]), int(info[STATION_MLY_LY]) + 1)
 
-    if monthly_fy == '' or monthly_fy > first_year:
-        print('gotta check earlier daily')
-        if daily_fy == '' or daily_fy > first_year:
-            print('gotta check earlier hourly')
+    daily_range = range(0)
+    if info[STATION_DLY_FY] != '':
+        daily_range = range(int(info[STATION_DLY_FY]), int(info[STATION_DLY_LY]) + 1)
 
-    if monthly_ly == '' or monthly_ly < last_year:
-        print('gotta check later daily')
-        if daily_ly == '' or daily_ly < last_year:
-            print('gotta check later hourly')
+    hourly_range = range(0)
+    if info[STATION_HLY_FY] != '':
+        hourly_range = range(int(info[STATION_HLY_FY]), int(info[STATION_HLY_LY]) + 1)
 
-    print()
+    dates = {}
+    for year in range(int(info[STATION_FY]), int(info[STATION_LY]) + 1):
+        if year in monthly_range:
+            dates[year] = 'monthly'
+        elif year in daily_range:
+            dates[year] = 'daily'
+        elif year in hourly_range:
+            dates[year] = 'hourly'
+        else:
+            dates[year] = 'nope'
 
-
-def full_monthly(station_name):
-    info = STATION_INFO[station_name]
-    return info['MLY First Year'] == info['First Year'] and info['MLY Last Year'] == info['Last Year']
-
-
-def full_daily(station_name):
-    info = STATION_INFO[station_name]
-    return info['DLY First Year'] == info['First Year'] and info['DLY Last Year'] == info['Last Year']
+    return dates
 
 
 # timeframes: monthly -> all data, daily -> full year, hourly -> full month
@@ -129,18 +138,51 @@ def get_precip(record):
     return precip if precip != '' else None
 
 
-def get_data(station):
-    r = requests.get((bulk_data(STATION_INFO[station]['Station ID'], 1970, 1, TIMEFRAMES['monthly'])))
+def get_monthly_data(station):
+    r = requests.get((bulk_data(STATION_INFO[station][STATION_ID], 1970, 1, TIMEFRAMES['monthly'])))
 
-    if r.status_code != 200:
-        print('nope')
-        return
+    return data_rows(r.text) if r.status_code == 200 else []
+
+
+def get_daily_data(station: str, year: int):
+    r = requests.get((bulk_data(STATION_INFO[station][STATION_ID], year, 1, TIMEFRAMES['daily'])))
+
+    return data_rows(r.text) if r.status_code == 200 else []
+
+
+def get_hourly_data(station: str, year: int, month: int):
+    r = requests.get((bulk_data(STATION_INFO[station][STATION_ID], year, month, TIMEFRAMES['hourly'])))
+
+    return data_rows(r.text) if r.status_code == 200 else []
+
+
+def get_data(station, dates):
+    print('data for', station)
 
     temp_data, precip_data = {}, {}
 
-    for record in data_rows(r.text):
-        temp_data[record[DATE_TIME_TITLE]] = get_temp(record)
-        precip_data[record[DATE_TIME_TITLE]] = get_precip(record)
+    # if 'monthly' in dates.values():
+    #     monthly_data = get_monthly_data(station)
+    #
+    #     for record in monthly_data:
+    #         temp_data[record[DATE_TIME_TITLE]] = get_temp(record)
+    #         precip_data[record[DATE_TIME_TITLE]] = get_precip(record)
+
+    if 'daily' in dates.values():
+        for year in dates:
+            if dates[year] != 'daily':
+                continue
+
+            daily_data = get_daily_data(station, year)
+            daily_temps = {}
+            for record in daily_data:
+                daily_temps[record[DATE_TIME_TITLE]] = get_temp(record)
+
+            # average by month
+            for month in range(1, 13):
+                pass
+
+            print(len(daily_temps))
 
     return temp_data, precip_data
 
@@ -152,8 +194,10 @@ def go():
     print('found', len(stations))
 
     for station in stations:
-        station_dates(station)
-        # temp_data, precip_data = get_data(station)
+        if station == 'BLACKSTOCK':
+            dates = station_dates(station)
+            temp_data, precip_data = get_data(station, dates)
+            print(len(temp_data))
 
 
 if __name__ == '__main__':
